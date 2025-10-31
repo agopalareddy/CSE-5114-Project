@@ -1,2 +1,6 @@
-.venv
-.github
+.venv/
+.github/
+*.p8
+*.pub
+*.env
+__pycache__/
