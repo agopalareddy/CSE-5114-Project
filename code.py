@@ -1,7 +1,12 @@
+import os
+import warnings
 import pybaseball as pyb
 import pandas as pd
-import warnings
-import os
+from snowflake_connect import setup_snowflake_connection, upload_data_to_snowflake
+from dotenv import load_dotenv
+
+con = setup_snowflake_connection()  # Capture the returned connection
+
 
 # Suppress FutureWarnings from pybaseball's postprocessing
 warnings.filterwarnings("ignore", category=FutureWarning, module="pybaseball")
@@ -46,3 +51,60 @@ data.tail().to_csv(os.path.join(eda_dir, "tail.csv"))
 # pd.DataFrame(data.columns, columns=["columns"]).to_csv(
 #     os.path.join(eda_dir, "columns.csv")
 # ) # Not needed since columns are already documented
+
+# count na values per column and export to na_counts.csv
+na_counts = data.isna().sum()
+na_counts = na_counts[na_counts > 0]
+na_counts.to_csv(os.path.join(eda_dir, "na_counts.csv"))
+
+# Reset index to avoid Pandas index warnings
+data = data.reset_index(drop=True)
+
+# Upload data to Snowflake with smart deduplication
+# (checks what's already in Snowflake and only uploads new rows)
+print("\n" + "=" * 80)
+print("UPLOADING DATA TO SNOWFLAKE")
+print("=" * 80)
+
+load_dotenv()
+SF_DATABASE = os.getenv("SF_DATABASE")
+SF_SCHEMA = os.getenv("SF_SCHEMA")
+STATCAST_TABLE = "STATCAST"
+
+upload_stats = upload_data_to_snowflake(
+    connection=con,
+    dataframe=data,
+    table_name=STATCAST_TABLE,
+    database=SF_DATABASE,
+    schema=SF_SCHEMA,
+    max_retries=3,
+    retry_delay=2,
+)
+
+print("\n" + "=" * 80)
+print("UPLOAD SUMMARY")
+print("=" * 80)
+print(f"Success: {upload_stats['success']}")
+print(f"Total Rows Fetched: {len(data)}")
+print(f"Rows Skipped (Already in Snowflake): {upload_stats['rows_skipped']}")
+print(f"Rows Uploaded: {upload_stats['rows_uploaded']}")
+print(f"Rows Inserted: {upload_stats['rows_inserted']}")
+print(f"Timestamp: {upload_stats['timestamp']}")
+print(f"Message: {upload_stats['message']}")
+if upload_stats["errors"]:
+    print(f"Errors: {upload_stats['errors']}")
+
+# Show tables in snowflake
+print("\n" + "=" * 80)
+print("TABLES IN SNOWFLAKE")
+print("=" * 80)
+cs = con.cursor()
+try:
+    cs.execute("SHOW TABLES;")
+    tables = cs.fetchall()
+    print("Tables in Snowflake:")
+    for table in tables:
+        print(f"  - {table[1]}")
+finally:
+    cs.close()
+    con.close()  # Close the connection
