@@ -8,10 +8,6 @@ batter: MLB Player Id tied to the play event.
 pitcher: MLB Player Id tied to the play event.
 events: Event of the resulting Plate Appearance.
 description: Description of the resulting pitch.
-spin_dir: * Deprecated field from the old tracking system.
-spin_rate_deprecated: * Deprecated field from the old tracking system. Replaced by release_spin
-break_angle_deprecated: * Deprecated field from the old tracking system.
-break_length_deprecated: * Deprecated field from the old tracking system.
 zone: Zone location of the ball when it crosses the plate from the catcher's perspective.
 des: Plate appearance description from game day.
 game_type: Type of Game. E = Exhibition, S = Spring Training, R = Regular Season, F = Wild Card, D = Divisional Series, L = League Championship Series, W = World Series
@@ -37,11 +33,7 @@ inning: Pre-pitch inning number.
 inning_topbot: Pre-pitch top or bottom of inning.
 hc_x: Hit coordinate X of batted ball.
 hc_y: Hit coordinate Y of batted ball.
-tfs_deprecated: * Deprecated field from old tracking system.
-tfs_zulu_deprecated: * Deprecated field from old tracking system.
 fielder_2: Pre-pitch MLB Player Id of Catcher.
-umpire: * Deprecated field from old tracking system.
-sv_id: Non-unique Id of play event per game.
 vx0: The velocity of the pitch, in feet per second, in x-dimension, determined at y=50 feet.
 vy0: The velocity of the pitch, in feet per second, in y-dimension, determined at y=50 feet.
 vy0: The velocity of the pitch, in feet per second, in z-dimension, determined at y=50 feet.
