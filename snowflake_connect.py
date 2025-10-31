@@ -160,24 +160,6 @@ def filter_new_rows(dataframe, existing_keys, key_columns):
     return filtered_df, num_new_rows, num_duplicates
 
 
-def remove_internal_duplicates(dataframe, key_columns):
-    """
-    Remove duplicate rows from dataframe based on composite key.
-
-    Args:
-        dataframe: pandas DataFrame to deduplicate
-        key_columns: List of column names that make up the composite key
-
-    Returns:
-        tuple: (deduplicated_df, num_removed)
-    """
-    initial_count = len(dataframe)
-    deduplicated_df = dataframe.drop_duplicates(subset=key_columns, keep="first").copy()
-    num_removed = initial_count - len(deduplicated_df)
-
-    return deduplicated_df, num_removed
-
-
 def validate_data_quality(dataframe):
     """
     Validate data quality before uploading to Snowflake.
