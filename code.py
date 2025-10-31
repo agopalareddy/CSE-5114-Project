@@ -12,7 +12,7 @@ pd.set_option("display.max_columns", None)
 # CONFIGURATIONS
 export_dir = "exports"
 eda_dir = "eda"
-documentation_dir = "docs"
+docs_dir = "docs"
 
 # --- RE-RUN YOUR CODE TO GET DATA ---
 data = pyb.statcast(start_dt="2024-07-01", end_dt="2024-07-02")
@@ -30,6 +30,10 @@ data = data.drop(
         "sv_id",
     ]
 )
+
+# export column names to statcast_columns_from_fetch.txt
+with open(os.path.join(docs_dir, "statcast_columns_from_fetch.txt"), "w") as f:
+    f.write("\n".join(data.columns))
 
 # Exploratory Data Analysis (EDA)
 os.makedirs(eda_dir, exist_ok=True)

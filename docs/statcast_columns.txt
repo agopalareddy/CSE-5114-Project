@@ -42,7 +42,7 @@ ay: The acceleration of the pitch, in feet per second per second, in y-dimension
 az: The acceleration of the pitch, in feet per second per second, in z-dimension, determined at y=50 feet.
 sz_top: Top of the batter's strike zone set by the operator when the ball is halfway to the plate.
 sz_bot: Bottom of the batter's strike zone set by the operator when the ball is halfway to the plate.
-hit_distance: Projected hit distance of the batted ball.
+hit_distance_sc: Projected hit distance of the batted ball.
 launch_speed: Exit velocity of the batted ball as tracked by Statcast. For the limited subset of batted balls not tracked directly, estimates are included based on the process described here.
 launch_angle: Launch angle of the batted ball as tracked by Statcast. For the limited subset of batted balls not tracked directly, estimates are included based on the process described here.
 effective_speed: Derived speed based on the the extension of the pitcher's release.
@@ -65,14 +65,7 @@ woba_value: wOBA value based on result of play.
 woba_denom: wOBA denominator based on result of play.
 babip_value: BABIP value based on result of play.
 iso_value: ISO value based on result of play.
-launch_speed_angle: Launch speed/angle zone based on launch angle and exit velocity.
-    1: Weak
-    2: Topped
-    3: Under
-    4: Flare/Burner
-    5: Solid Contact
-    6: Barrel
-    at_bat_number: Plate appearance number of the game.
+launch_speed_angle: Launch speed/angle zone based on launch angle and exit velocity. 1: Weak; 2: Topped; 3: Under; 4: Flare/Burner; 5: Solid Contact; 6: Barrel; at_bat_number: Plate appearance number of the game.
 pitch_number: Total pitch number of the plate appearance.
 pitch_name: The name of the pitch derived from the Statcast Data.
 home_score: Pre-pitch home score
@@ -87,3 +80,32 @@ of_fielding_alignment: Outfield fielding alignment at the time of the pitch.
 spin_axis: The Spin Axis in the 2D X-Z plane in degrees from 0 to 360, such that 180 represents a pure backspin fastball and 0 degrees represents a pure topspin (12-6) curveball
 delta_home_win_exp: The change in Win Expectancy before the Plate Appearance and after the Plate Appearance 
 delta_run_exp: The change in Run Expectancy before the Pitch and after the Pitch
+bat_speed: Bat speed of the batter.
+swing_length: Swing length of the batter.
+estimated_slg_using_speedangle: Estimated Slugging Percentage based on launch angle and exit velocity.
+delta_pitcher_run_exp: The change in Run Expectancy for the pitcher before and after the pitch.
+hyper_speed: Hyperbolic speed measurement.
+home_score_diff: Difference in score favoring the home team.
+bat_score_diff: Difference in score favoring the batting team.
+home_win_exp: Home team win expectancy.
+bat_win_exp: Batting team win expectancy.
+age_pit_legacy: Pitcher age (legacy calculation).
+age_bat_legacy: Batter age (legacy calculation).
+age_pit: Pitcher age.
+age_bat: Batter age.
+n_thruorder_pitcher: Number of pitchers used through this order.
+n_priorpa_thisgame_player_at_bat: Number of prior plate appearances by this batter in this game.
+pitcher_days_since_prev_game: Days since pitcher's previous game.
+batter_days_since_prev_game: Days since batter's previous game.
+pitcher_days_until_next_game: Days until pitcher's next game.
+batter_days_until_next_game: Days until batter's next game.
+api_break_z_with_gravity: Vertical break of the pitch including gravity.
+api_break_x_arm: Horizontal break of the pitch from arm side.
+api_break_x_batter_in: Horizontal break of the pitch from batter's perspective (in).
+arm_angle: Angle of pitcher's arm during release.
+attack_angle: Attack angle of the pitch.
+attack_direction: Attack direction of the pitch.
+swing_path_tilt: Tilt of the batter's swing path.
+intercept_ball_minus_batter_pos_x_inches: X-axis distance between ball and batter position at intercept (in inches).
+intercept_ball_minus_batter_pos_y_inches: Y-axis distance between ball and batter position at intercept (in inches).
+post_fld_score: Post-pitch field team score.

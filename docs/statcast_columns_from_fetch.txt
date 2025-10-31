@@ -8,10 +8,6 @@ batter
 pitcher
 events
 description
-spin_dir
-spin_rate_deprecated
-break_angle_deprecated
-break_length_deprecated
 zone
 des
 game_type
@@ -37,10 +33,6 @@ inning
 inning_topbot
 hc_x
 hc_y
-tfs_deprecated
-tfs_zulu_deprecated
-umpire
-sv_id
 vx0
 vy0
 vz0
