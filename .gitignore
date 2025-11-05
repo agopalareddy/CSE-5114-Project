@@ -1,4 +1,8 @@
+# Virtual Environment
 .venv/
+venv/
+
+# Other
 .github/
 *.p8
 *.pub
