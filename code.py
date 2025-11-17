@@ -155,7 +155,7 @@ all_relevant_columns = (
 
 # Getting a composite key for the data
 
-composite_key = [game_pk, at_bat_number, pitch_number]
+composite_key = ['game_pk', 'at_bat_number', 'pitch_number']
 
 # Assuming 'data' is your DataFrame with all the statcast info
 
