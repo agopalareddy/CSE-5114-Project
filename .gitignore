@@ -1,4 +1,13 @@
+# Virtual Environment
 .venv/
+venv/
+
+# Jupyter Notebook Cache and Jupyter Notebook Files
+*.ipynb_checkpoints/
+scripts/.ipynb_checkpoints/
+*.ipynb
+
+# Other
 .github/
 *.p8
 *.pub
