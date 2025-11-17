@@ -38,7 +38,7 @@ def get_daily_statcast_data(start_str, end_str):
         
         try:
             # This is the core pybaseball function
-            daily_data = pybaseball.statcast(start_dt=day_str, end_dt=day_str)
+            daily_data = statcast(start_dt=day_str, end_dt=day_str)
             
             if not daily_data.empty:
                 all_daily_data.append(daily_data)
