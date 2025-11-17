@@ -62,12 +62,12 @@ def get_daily_statcast_data(start_str, end_str):
     season_df = pd.concat(all_daily_data, ignore_index=True)
     return season_df
 
-def get_pitcher_data(START_DATE, END_DATE)
-    pitcher_data = statcast_pitcher(start_dt=start_str, end_dt=end_str, id=player_id)
+def get_pitcher_data(START_DATE, END_DATE, player_id):
+    pitcher_data = statcast_pitcher(start_dt=START_DATE, end_dt=END_DATE, player_id=player_id)
     return pitcher_data
 
 def get_batter_data(START_DATE, END_DATE):
-    batter_data = statcast_batter(start_dt=start_str, end_dt=end_str)
+    batter_data = statcast_batter(start_dt=START_DATE, end_dt=END_DATE)
     return batter_data
 
 if __name__ == "__main__":
