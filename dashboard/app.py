@@ -127,15 +127,28 @@ def get_data_summary():
 
 
 def get_available_dates():
-    """Get list of dates with data."""
+    """Get list of dates with data and date range."""
     query = """
     SELECT DISTINCT "game_date" as GAME_DATE
     FROM STATCAST 
     ORDER BY "game_date" DESC
-    LIMIT 100
     """
     df = run_query(query)
-    return df["GAME_DATE"].tolist() if not df.empty else []
+    if df.empty:
+        return [], None, None
+    dates = df["GAME_DATE"].tolist()
+    # Convert to date objects if they aren't already
+    date_objects = []
+    for d in dates:
+        if hasattr(d, "date"):
+            date_objects.append(d.date())
+        elif hasattr(d, "strftime"):
+            date_objects.append(d)
+        else:
+            from datetime import datetime
+
+            date_objects.append(datetime.strptime(str(d), "%Y-%m-%d").date())
+    return date_objects, min(date_objects), max(date_objects)
 
 
 def get_games_for_date(date_str):
@@ -289,6 +302,121 @@ def get_team_pitch_usage(date_str=None, season_year=None):
     {where_clause}
     GROUP BY "home_team", "pitch_type", "pitch_name"
     ORDER BY team, pitch_count DESC
+    """
+    return run_query(query)
+
+
+def get_all_teams():
+    """Get list of all teams in the data."""
+    query = """
+    SELECT DISTINCT "home_team" as TEAM
+    FROM STATCAST
+    UNION
+    SELECT DISTINCT "away_team" as TEAM
+    FROM STATCAST
+    ORDER BY TEAM
+    """
+    df = run_query(query)
+    return df["TEAM"].tolist() if not df.empty else []
+
+
+def get_team_matchup_games(team1, team2):
+    """Get all games between two teams."""
+    query = f"""
+    SELECT 
+        "game_pk" as GAME_PK,
+        "game_date" as GAME_DATE,
+        "home_team" as HOME_TEAM,
+        "away_team" as AWAY_TEAM,
+        MAX("home_score") as HOME_SCORE,
+        MAX("away_score") as AWAY_SCORE,
+        COUNT(*) as TOTAL_PITCHES,
+        COUNT(DISTINCT "pitcher") as PITCHERS_USED,
+        ROUND(AVG("release_speed"), 1) as AVG_VELOCITY
+    FROM STATCAST
+    WHERE ("home_team" = '{team1}' AND "away_team" = '{team2}')
+       OR ("home_team" = '{team2}' AND "away_team" = '{team1}')
+    GROUP BY "game_pk", "game_date", "home_team", "away_team"
+    ORDER BY "game_date" DESC
+    """
+    return run_query(query)
+
+
+def get_team_matchup_summary(team1, team2):
+    """Get summary statistics for matchup between two teams."""
+    query = f"""
+    WITH game_results AS (
+        SELECT 
+            "game_pk" as GAME_PK,
+            "game_date" as GAME_DATE,
+            "home_team" as HOME_TEAM,
+            "away_team" as AWAY_TEAM,
+            MAX("home_score") as HOME_SCORE,
+            MAX("away_score") as AWAY_SCORE
+        FROM STATCAST
+        WHERE ("home_team" = '{team1}' AND "away_team" = '{team2}')
+           OR ("home_team" = '{team2}' AND "away_team" = '{team1}')
+        GROUP BY "game_pk", "game_date", "home_team", "away_team"
+    )
+    SELECT
+        COUNT(*) as TOTAL_GAMES,
+        SUM(CASE WHEN (HOME_TEAM = '{team1}' AND HOME_SCORE > AWAY_SCORE) 
+                  OR (AWAY_TEAM = '{team1}' AND AWAY_SCORE > HOME_SCORE) THEN 1 ELSE 0 END) as TEAM1_WINS,
+        SUM(CASE WHEN (HOME_TEAM = '{team2}' AND HOME_SCORE > AWAY_SCORE) 
+                  OR (AWAY_TEAM = '{team2}' AND AWAY_SCORE > HOME_SCORE) THEN 1 ELSE 0 END) as TEAM2_WINS,
+        SUM(CASE WHEN HOME_TEAM = '{team1}' THEN HOME_SCORE ELSE AWAY_SCORE END) as TEAM1_RUNS,
+        SUM(CASE WHEN HOME_TEAM = '{team2}' THEN HOME_SCORE ELSE AWAY_SCORE END) as TEAM2_RUNS,
+        MIN(GAME_DATE) as FIRST_GAME,
+        MAX(GAME_DATE) as LAST_GAME
+    FROM game_results
+    """
+    return run_query(query)
+
+
+def get_matchup_pitching_stats(team1, team2):
+    """Get pitching statistics for games between two teams."""
+    query = f"""
+    SELECT 
+        CASE WHEN "home_team" = '{team1}' OR "away_team" = '{team1}' THEN
+            CASE WHEN ("home_team" = '{team1}' AND "inning_topbot" = 'Bot') 
+                  OR ("away_team" = '{team1}' AND "inning_topbot" = 'Top') 
+                 THEN '{team1}' ELSE '{team2}' END
+        END as PITCHING_TEAM,
+        "pitch_type" as PITCH_TYPE,
+        "pitch_name" as PITCH_NAME,
+        COUNT(*) as PITCH_COUNT,
+        ROUND(AVG("release_speed"), 1) as AVG_VELOCITY,
+        ROUND(AVG("release_spin_rate"), 0) as AVG_SPIN,
+        ROUND(100.0 * SUM(CASE WHEN "type" = 'S' THEN 1 ELSE 0 END) / COUNT(*), 1) as STRIKE_PCT
+    FROM STATCAST
+    WHERE ("home_team" = '{team1}' AND "away_team" = '{team2}')
+       OR ("home_team" = '{team2}' AND "away_team" = '{team1}')
+    GROUP BY PITCHING_TEAM, "pitch_type", "pitch_name"
+    HAVING PITCHING_TEAM IS NOT NULL
+    ORDER BY PITCHING_TEAM, PITCH_COUNT DESC
+    """
+    return run_query(query)
+
+
+def get_matchup_top_pitchers(team1, team2):
+    """Get top pitchers in matchup between two teams."""
+    query = f"""
+    SELECT 
+        "player_name" as PITCHER_NAME,
+        CASE WHEN ("home_team" = '{team1}' AND "inning_topbot" = 'Bot') 
+              OR ("away_team" = '{team1}' AND "inning_topbot" = 'Top') 
+             THEN '{team1}' ELSE '{team2}' END as TEAM,
+        COUNT(*) as TOTAL_PITCHES,
+        COUNT(DISTINCT "game_pk") as GAMES,
+        ROUND(AVG("release_speed"), 1) as AVG_VELOCITY,
+        ROUND(MAX("release_speed"), 1) as MAX_VELOCITY,
+        ROUND(100.0 * SUM(CASE WHEN "type" = 'S' THEN 1 ELSE 0 END) / COUNT(*), 1) as STRIKE_PCT
+    FROM STATCAST
+    WHERE (("home_team" = '{team1}' AND "away_team" = '{team2}')
+       OR ("home_team" = '{team2}' AND "away_team" = '{team1}'))
+    GROUP BY "player_name", TEAM
+    ORDER BY TOTAL_PITCHES DESC
+    LIMIT 10
     """
     return run_query(query)
 
@@ -456,18 +584,37 @@ def main():
     # Date and Game Selection
     st.header("🎯 Game Explorer")
 
-    available_dates = get_available_dates()
+    available_dates, min_date, max_date = get_available_dates()
     if not available_dates:
         st.warning("No games found in database.")
         st.stop()
 
-    selected_date = st.selectbox(
+    # Convert available_dates to a set for quick lookup
+    available_dates_set = set(available_dates)
+
+    # Use date_input with calendar picker
+    selected_date = st.date_input(
         "Select Date",
-        available_dates,
-        format_func=lambda x: (
-            x.strftime("%Y-%m-%d (%A)") if hasattr(x, "strftime") else str(x)
-        ),
+        value=max_date,  # Default to most recent date
+        min_value=min_date,
+        max_value=max_date,
+        help=f"Data available from {min_date} to {max_date}",
     )
+
+    # Check if selected date has data
+    if selected_date not in available_dates_set:
+        st.warning(
+            f"No games on {selected_date.strftime('%Y-%m-%d (%A)')}. Please select another date."
+        )
+        # Show nearby dates with games
+        nearby = sorted(
+            [d for d in available_dates if abs((d - selected_date).days) <= 7]
+        )
+        if nearby:
+            st.info(
+                f"Nearby dates with games: {', '.join(d.strftime('%m/%d') for d in nearby[:5])}"
+            )
+        st.stop()
 
     # Get games for selected date
     games_df = get_games_for_date(str(selected_date))
@@ -510,7 +657,7 @@ def main():
                     pitcher_stats["PITCHER_NAME"] == pitcher_name
                 ]
 
-                with st.expander(f"🎯 {pitcher_name}", expanded=True):
+                with st.expander(f"🎯 {pitcher_name}", expanded=False):
                     # Metrics row
                     total_pitches = pitcher_df["PITCH_COUNT"].sum()
                     avg_velo = pitcher_df["AVG_VELOCITY"].mean()
@@ -585,6 +732,319 @@ def main():
             st.download_button(
                 "Download CSV", csv, f"game_{game_pk}_pitches.csv", "text/csv"
             )
+
+    # ==========================================================================
+    # TEAM MATCHUP SECTION
+    # ==========================================================================
+    st.divider()
+    st.header("🆚 Team Matchup")
+    st.markdown("Compare head-to-head statistics between any two teams")
+
+    # Get all teams
+    all_teams = get_all_teams()
+
+    if not all_teams:
+        st.warning("No team data available.")
+    else:
+        col_team1, col_team2 = st.columns(2)
+
+        with col_team1:
+            team1 = st.selectbox("Select Team 1", all_teams, index=0, key="team1")
+
+        with col_team2:
+            # Default to a different team if possible
+            default_idx = min(1, len(all_teams) - 1)
+            team2 = st.selectbox(
+                "Select Team 2", all_teams, index=default_idx, key="team2"
+            )
+
+        if team1 == team2:
+            st.warning("⚠️ Please select two different teams to compare.")
+        else:
+            # Get matchup data
+            matchup_games = get_team_matchup_games(team1, team2)
+
+            if matchup_games.empty:
+                st.info(
+                    f"📭 No games found between {team1} and {team2} in the current dataset."
+                )
+                st.caption(
+                    "This could mean these teams haven't played each other in the loaded data, or the data is still being backfilled."
+                )
+            else:
+                # Summary stats
+                matchup_summary = get_team_matchup_summary(team1, team2)
+
+                if not matchup_summary.empty:
+                    st.subheader(f"📊 {team1} vs {team2} - Head to Head")
+
+                    summary_row = matchup_summary.iloc[0]
+                    total_games = int(summary_row["TOTAL_GAMES"])
+                    team1_wins = int(summary_row["TEAM1_WINS"])
+                    team2_wins = int(summary_row["TEAM2_WINS"])
+                    team1_runs = (
+                        int(summary_row["TEAM1_RUNS"])
+                        if pd.notna(summary_row["TEAM1_RUNS"])
+                        else 0
+                    )
+                    team2_runs = (
+                        int(summary_row["TEAM2_RUNS"])
+                        if pd.notna(summary_row["TEAM2_RUNS"])
+                        else 0
+                    )
+
+                    # Metrics row
+                    m1, m2, m3, m4, m5 = st.columns(5)
+                    m1.metric("Total Games", total_games)
+                    m2.metric(f"{team1} Wins", team1_wins)
+                    m3.metric(f"{team2} Wins", team2_wins)
+                    m4.metric(f"{team1} Runs", team1_runs)
+                    m5.metric(f"{team2} Runs", team2_runs)
+
+                    # Win percentage visualization
+                    if total_games > 0:
+                        team1_pct = (team1_wins / total_games) * 100
+                        team2_pct = (team2_wins / total_games) * 100
+
+                        fig_record = go.Figure()
+                        fig_record.add_trace(
+                            go.Bar(
+                                x=[team1_pct],
+                                y=[" "],
+                                orientation="h",
+                                name=f"{team1} ({team1_wins}W)",
+                                marker_color="#1f77b4",
+                                text=f"{team1}: {team1_wins}W ({team1_pct:.1f}%)",
+                                textposition="inside",
+                            )
+                        )
+                        fig_record.add_trace(
+                            go.Bar(
+                                x=[team2_pct],
+                                y=[" "],
+                                orientation="h",
+                                name=f"{team2} ({team2_wins}W)",
+                                marker_color="#ff7f0e",
+                                text=f"{team2}: {team2_wins}W ({team2_pct:.1f}%)",
+                                textposition="inside",
+                            )
+                        )
+                        fig_record.update_layout(
+                            barmode="stack",
+                            title="Win Distribution",
+                            xaxis_title="Win Percentage",
+                            showlegend=True,
+                            height=150,
+                            margin=dict(l=20, r=20, t=40, b=20),
+                        )
+                        st.plotly_chart(fig_record, use_container_width=True)
+
+                st.divider()
+
+                # Games list
+                st.subheader("🗓️ All Games")
+
+                # Format the games dataframe for display
+                display_games = matchup_games.copy()
+                display_games["RESULT"] = display_games.apply(
+                    lambda r: f"{r['AWAY_TEAM']} {int(r['AWAY_SCORE'])} @ {r['HOME_TEAM']} {int(r['HOME_SCORE'])}",
+                    axis=1,
+                )
+                display_games["WINNER"] = display_games.apply(
+                    lambda r: (
+                        r["HOME_TEAM"]
+                        if r["HOME_SCORE"] > r["AWAY_SCORE"]
+                        else r["AWAY_TEAM"]
+                    ),
+                    axis=1,
+                )
+
+                st.dataframe(
+                    display_games[
+                        [
+                            "GAME_DATE",
+                            "RESULT",
+                            "WINNER",
+                            "TOTAL_PITCHES",
+                            "PITCHERS_USED",
+                            "AVG_VELOCITY",
+                        ]
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "GAME_DATE": st.column_config.DateColumn(
+                            "Date", format="YYYY-MM-DD"
+                        ),
+                        "RESULT": "Score",
+                        "WINNER": "Winner",
+                        "TOTAL_PITCHES": st.column_config.NumberColumn(
+                            "Pitches", format="%d"
+                        ),
+                        "PITCHERS_USED": st.column_config.NumberColumn(
+                            "Pitchers", format="%d"
+                        ),
+                        "AVG_VELOCITY": st.column_config.NumberColumn(
+                            "Avg Velo", format="%.1f mph"
+                        ),
+                    },
+                )
+
+                # Game selector for detailed view
+                st.subheader("🔍 Game Details")
+
+                game_options_matchup = []
+                for _, game in matchup_games.iterrows():
+                    date_str = (
+                        game["GAME_DATE"].strftime("%Y-%m-%d")
+                        if hasattr(game["GAME_DATE"], "strftime")
+                        else str(game["GAME_DATE"])
+                    )
+                    label = f"{date_str}: {game['AWAY_TEAM']} {int(game['AWAY_SCORE'])} @ {game['HOME_TEAM']} {int(game['HOME_SCORE'])}"
+                    game_options_matchup.append((game["GAME_PK"], label))
+
+                selected_matchup_game = st.selectbox(
+                    "Select a game to view details",
+                    game_options_matchup,
+                    format_func=lambda x: x[1],
+                    key="matchup_game_select",
+                )
+
+                matchup_game_pk = selected_matchup_game[0]
+
+                # Show game details in tabs
+                tab_pitchers, tab_strikezone, tab_pitches = st.tabs(
+                    ["Pitchers", "Strike Zone", "All Pitches"]
+                )
+
+                with tab_pitchers:
+                    game_pitcher_stats = get_pitcher_stats(game_pk=matchup_game_pk)
+
+                    if not game_pitcher_stats.empty:
+                        # Split by team (approximation based on inning)
+                        for pitcher_name in game_pitcher_stats["PITCHER_NAME"].unique()[
+                            :8
+                        ]:
+                            pitcher_df = game_pitcher_stats[
+                                game_pitcher_stats["PITCHER_NAME"] == pitcher_name
+                            ]
+
+                            with st.expander(f"⚾ {pitcher_name}", expanded=False):
+                                total_p = pitcher_df["PITCH_COUNT"].sum()
+                                avg_v = pitcher_df["AVG_VELOCITY"].mean()
+                                max_v = pitcher_df["MAX_VELOCITY"].max()
+
+                                c1, c2, c3 = st.columns(3)
+                                c1.metric("Pitches", total_p)
+                                c2.metric("Avg Velo", f"{avg_v:.1f}")
+                                c3.metric("Max Velo", f"{max_v:.1f}")
+
+                                st.dataframe(
+                                    pitcher_df[
+                                        [
+                                            "PITCH_NAME",
+                                            "PITCH_COUNT",
+                                            "AVG_VELOCITY",
+                                            "STRIKE_PCT",
+                                        ]
+                                    ],
+                                    hide_index=True,
+                                    use_container_width=True,
+                                )
+                    else:
+                        st.info("No pitcher stats available for this game.")
+
+                with tab_strikezone:
+                    game_pitcher_stats = get_pitcher_stats(game_pk=matchup_game_pk)
+                    if not game_pitcher_stats.empty:
+                        pitcher_list = (
+                            game_pitcher_stats[["PITCHER", "PITCHER_NAME"]]
+                            .drop_duplicates()
+                            .values.tolist()
+                        )
+
+                        selected_p = st.selectbox(
+                            "Select Pitcher",
+                            pitcher_list,
+                            format_func=lambda x: x[1],
+                            key="matchup_pitcher_select",
+                        )
+
+                        locations = get_pitch_locations(
+                            game_pk=matchup_game_pk, pitcher_id=selected_p[0]
+                        )
+
+                        if not locations.empty:
+                            fig = create_strike_zone_plot(locations)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No pitch location data available.")
+                    else:
+                        st.info("No pitcher data available.")
+
+                with tab_pitches:
+                    game_pitches = get_game_pitches(matchup_game_pk)
+                    if not game_pitches.empty:
+                        st.dataframe(game_pitches, use_container_width=True, height=400)
+
+                        csv = game_pitches.to_csv(index=False)
+                        st.download_button(
+                            "Download CSV",
+                            csv,
+                            f"matchup_{team1}_{team2}_game_{matchup_game_pk}.csv",
+                            "text/csv",
+                            key="matchup_download",
+                        )
+                    else:
+                        st.info("No pitch data available.")
+
+                # Top pitchers in the matchup
+                st.divider()
+                st.subheader("🏆 Top Pitchers in This Matchup")
+
+                top_pitchers = get_matchup_top_pitchers(team1, team2)
+                if not top_pitchers.empty:
+                    col_t1, col_t2 = st.columns(2)
+
+                    with col_t1:
+                        st.markdown(f"**{team1} Pitchers**")
+                        t1_pitchers = top_pitchers[top_pitchers["TEAM"] == team1]
+                        if not t1_pitchers.empty:
+                            st.dataframe(
+                                t1_pitchers[
+                                    [
+                                        "PITCHER_NAME",
+                                        "GAMES",
+                                        "TOTAL_PITCHES",
+                                        "AVG_VELOCITY",
+                                        "STRIKE_PCT",
+                                    ]
+                                ],
+                                hide_index=True,
+                                use_container_width=True,
+                            )
+                        else:
+                            st.caption("No data")
+
+                    with col_t2:
+                        st.markdown(f"**{team2} Pitchers**")
+                        t2_pitchers = top_pitchers[top_pitchers["TEAM"] == team2]
+                        if not t2_pitchers.empty:
+                            st.dataframe(
+                                t2_pitchers[
+                                    [
+                                        "PITCHER_NAME",
+                                        "GAMES",
+                                        "TOTAL_PITCHES",
+                                        "AVG_VELOCITY",
+                                        "STRIKE_PCT",
+                                    ]
+                                ],
+                                hide_index=True,
+                                use_container_width=True,
+                            )
+                        else:
+                            st.caption("No data")
 
     # Footer
     st.divider()
