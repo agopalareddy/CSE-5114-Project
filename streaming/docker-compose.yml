@@ -1,0 +1,98 @@
+# Docker Compose for Local Kafka Setup
+# =====================================
+# This sets up Kafka and Zookeeper for local streaming development.
+#
+# Usage:
+#   docker-compose up -d          # Start services
+#   docker-compose down           # Stop services
+#   docker-compose logs -f kafka  # View Kafka logs
+#
+# Prerequisites:
+#   - Docker Desktop installed
+#   - WSL2 enabled (for Windows)
+
+version: "3.8"
+
+services:
+  # Zookeeper - Required for Kafka coordination
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # Kafka UI - Web interface to monitor Kafka
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+  # Optional: Schema Registry (for Avro/Protobuf schemas)
+  # schema-registry:
+  #   image: confluentinc/cp-schema-registry:7.5.0
+  #   container_name: schema-registry
+  #   depends_on:
+  #     - kafka
+  #   ports:
+  #     - "8081:8081"
+  #   environment:
+  #     SCHEMA_REGISTRY_HOST_NAME: schema-registry
+  #     SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+
+volumes:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+# =============================================================================
+# After starting, create the Statcast topic:
+#
+# docker exec -it kafka kafka-topics --create \
+#   --bootstrap-server localhost:9092 \
+#   --topic statcast \
+#   --partitions 3 \
+#   --replication-factor 1
+#
+# List topics:
+# docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
+#
+# Consume messages (for debugging):
+# docker exec -it kafka kafka-console-consumer \
+#   --bootstrap-server localhost:9092 \
+#   --topic statcast \
+#   --from-beginning
+# =============================================================================
