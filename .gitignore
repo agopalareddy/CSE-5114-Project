@@ -7,6 +7,9 @@ venv/
 scripts/.ipynb_checkpoints/
 *.ipynb
 
+docs/Project Progress Report
+docs/Project Proposal
+
 # Other
 .github/
 *.p8
