@@ -17,8 +17,21 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
+import time
+import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+
+# Kafka simulation helpers
+from kafka_simulation import (
+    get_simulation_status,
+    start_kafka_simulation,
+    pause_kafka_simulation,
+    stop_kafka_simulation,
+    update_simulation_speed,
+    get_simulation_pitches_query,
+    is_kafka_available,
+)
 
 # =============================================================================
 # PAGE CONFIG
@@ -1027,6 +1040,7 @@ def page_home():
     - **🏠 Home** - Overview of all data in the system
     - **🎯 Game Explorer** - Browse games by date, view pitcher stats, strike zones, and velocity trends
     - **🆚 Team Matchup** - Compare head-to-head records between any two teams
+    - **🎬 Live Game Simulation** - Watch any game unfold pitch-by-pitch
     
     ### 📊 Quick Stats
     """
@@ -1056,6 +1070,602 @@ def page_home():
 
 
 # =============================================================================
+# LIVE GAME SIMULATION PAGE
+# =============================================================================
+
+
+def get_game_pitches_ordered(game_pk):
+    """Get all pitches for a game in chronological order with full details."""
+    query = f"""
+    SELECT 
+        "game_pk" as GAME_PK,
+        "game_date" as GAME_DATE,
+        "inning" as INNING,
+        "inning_topbot" as INNING_TOPBOT,
+        "at_bat_number" as AT_BAT_NUMBER,
+        "pitch_number" as PITCH_NUMBER,
+        "pitcher" as PITCHER_ID,
+        "player_name" as PITCHER_NAME,
+        "batter" as BATTER_ID,
+        "pitch_type" as PITCH_TYPE,
+        "pitch_name" as PITCH_NAME,
+        "release_speed" as RELEASE_SPEED,
+        "release_spin_rate" as SPIN_RATE,
+        "pfx_x" as PFX_X,
+        "pfx_z" as PFX_Z,
+        "plate_x" as PLATE_X,
+        "plate_z" as PLATE_Z,
+        "zone" as ZONE,
+        "type" as PITCH_RESULT,
+        "events" as EVENTS,
+        "description" as DESCRIPTION,
+        "balls" as BALLS,
+        "strikes" as STRIKES,
+        "outs_when_up" as OUTS,
+        "home_score" as HOME_SCORE,
+        "away_score" as AWAY_SCORE,
+        "home_team" as HOME_TEAM,
+        "away_team" as AWAY_TEAM,
+        "sz_top" as SZ_TOP,
+        "sz_bot" as SZ_BOT
+    FROM STATCAST
+    WHERE "game_pk" = {game_pk}
+    ORDER BY "inning", 
+             CASE WHEN "inning_topbot" = 'Top' THEN 0 ELSE 1 END,
+             "at_bat_number", 
+             "pitch_number"
+    """
+    return run_query(query)
+
+
+def create_live_strike_zone(pitches_df, current_idx):
+    """Create animated strike zone showing pitches up to current index."""
+    if pitches_df.empty or current_idx < 0:
+        fig = go.Figure()
+        # Add empty strike zone
+        fig.add_shape(
+            type="rect",
+            x0=-0.83,
+            y0=1.5,
+            x1=0.83,
+            y1=3.5,
+            line=dict(color="black", width=2),
+        )
+        fig.update_layout(
+            xaxis=dict(range=[-2.5, 2.5], scaleanchor="y"),
+            yaxis=dict(range=[0, 5]),
+            height=400,
+            title="Strike Zone",
+        )
+        return fig
+
+    # Get pitches up to current index
+    display_df = pitches_df.iloc[: current_idx + 1].copy()
+    display_df = display_df[
+        display_df["PLATE_X"].notna() & display_df["PLATE_Z"].notna()
+    ]
+
+    if display_df.empty:
+        fig = go.Figure()
+        fig.add_shape(
+            type="rect",
+            x0=-0.83,
+            y0=1.5,
+            x1=0.83,
+            y1=3.5,
+            line=dict(color="black", width=2),
+        )
+        fig.update_layout(
+            xaxis=dict(range=[-2.5, 2.5], scaleanchor="y"),
+            yaxis=dict(range=[0, 5]),
+            height=400,
+            title="Strike Zone",
+        )
+        return fig
+
+    # Color map
+    color_map = {"S": "red", "B": "blue", "X": "green"}
+
+    fig = go.Figure()
+
+    # Strike zone rectangle
+    fig.add_shape(
+        type="rect",
+        x0=-0.83,
+        y0=1.5,
+        x1=0.83,
+        y1=3.5,
+        line=dict(color="black", width=2),
+        fillcolor="rgba(0,0,0,0)",
+    )
+
+    # Home plate
+    fig.add_shape(
+        type="path",
+        path="M -0.83 0 L 0.83 0 L 0.83 0.25 L 0 0.5 L -0.83 0.25 Z",
+        line=dict(color="black", width=1),
+        fillcolor="white",
+    )
+
+    # Previous pitches (smaller, faded)
+    if len(display_df) > 1:
+        prev_df = display_df.iloc[:-1]
+        for result_type in prev_df["PITCH_RESULT"].unique():
+            type_df = prev_df[prev_df["PITCH_RESULT"] == result_type]
+            fig.add_trace(
+                go.Scatter(
+                    x=type_df["PLATE_X"],
+                    y=type_df["PLATE_Z"],
+                    mode="markers",
+                    marker=dict(
+                        color=color_map.get(result_type, "gray"), size=6, opacity=0.3
+                    ),
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+
+    # Current pitch (larger, highlighted)
+    current_pitch = display_df.iloc[-1]
+    result_type = current_pitch["PITCH_RESULT"]
+    fig.add_trace(
+        go.Scatter(
+            x=[current_pitch["PLATE_X"]],
+            y=[current_pitch["PLATE_Z"]],
+            mode="markers",
+            marker=dict(
+                color=color_map.get(result_type, "gray"),
+                size=18,
+                opacity=1,
+                line=dict(color="white", width=2),
+            ),
+            name="Current Pitch",
+            hovertemplate=(
+                f"<b>{current_pitch['PITCH_NAME']}</b><br>"
+                f"Velocity: {current_pitch['RELEASE_SPEED']:.1f} mph<br>"
+                f"Result: {current_pitch['DESCRIPTION']}<br>"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    fig.update_layout(
+        xaxis=dict(range=[-2.5, 2.5], scaleanchor="y", title=""),
+        yaxis=dict(range=[0, 5], title=""),
+        height=350,
+        margin=dict(l=20, r=20, t=30, b=20),
+        showlegend=False,
+    )
+
+    return fig
+
+
+def create_velocity_tracker(pitches_df, current_idx):
+    """Create velocity chart showing progression up to current pitch."""
+    if pitches_df.empty or current_idx < 0:
+        return go.Figure()
+
+    display_df = pitches_df.iloc[: current_idx + 1].copy()
+    display_df = display_df[display_df["RELEASE_SPEED"].notna()]
+
+    if display_df.empty:
+        return go.Figure()
+
+    display_df["PITCH_IDX"] = range(1, len(display_df) + 1)
+
+    fig = px.scatter(
+        display_df,
+        x="PITCH_IDX",
+        y="RELEASE_SPEED",
+        color="PITCH_NAME",
+        hover_data=["PITCHER_NAME", "DESCRIPTION"],
+    )
+
+    fig.update_layout(
+        xaxis_title="Pitch #",
+        yaxis_title="Velocity (mph)",
+        height=250,
+        margin=dict(l=20, r=20, t=30, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+
+    return fig
+
+
+def create_pitch_count_display(balls, strikes, outs):
+    """Create HTML for pitch count display."""
+
+    def ball_indicator(filled):
+        color = "#2ecc71" if filled else "#bdc3c7"
+        return f'<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:{color};margin:2px;"></span>'
+
+    def strike_indicator(filled):
+        color = "#e74c3c" if filled else "#bdc3c7"
+        return f'<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:{color};margin:2px;"></span>'
+
+    def out_indicator(filled):
+        color = "#f39c12" if filled else "#bdc3c7"
+        return f'<span style="display:inline-block;width:20px;height:20px;border-radius:50%;background:{color};margin:2px;"></span>'
+
+    balls_html = "".join([ball_indicator(i < balls) for i in range(4)])
+    strikes_html = "".join([strike_indicator(i < strikes) for i in range(3)])
+    outs_html = "".join([out_indicator(i < outs) for i in range(3)])
+
+    return f"""
+    <div style="font-family: monospace; font-size: 14px;">
+        <div><b>B</b> {balls_html}</div>
+        <div><b>S</b> {strikes_html}</div>
+        <div><b>O</b> {outs_html}</div>
+    </div>
+    """
+
+
+def page_live_simulation():
+    """
+    Live Game Simulation page - powered by Kafka + Spark Streaming.
+
+    Architecture:
+    1. User selects a game and clicks Play
+    2. Dashboard calls FastAPI to start simulation_producer
+    3. simulation_producer reads from Snowflake, publishes to Kafka
+    4. Spark Streaming consumes from Kafka, writes to SIMULATION_PITCHES
+    5. Dashboard polls SIMULATION_PITCHES table to display live updates
+
+    Fallback: If Kafka/API not available, uses local simulation mode.
+    """
+    st.title("🎬 Live Game Simulation")
+
+    # Check if Kafka simulation API is available
+    kafka_available, api_status = is_kafka_available()
+
+    # Mode selection
+    if kafka_available:
+        st.success("🔌 Connected to Kafka Streaming Pipeline")
+        mode = "kafka"
+    else:
+        st.warning("⚠️ Kafka API not available. Using local simulation mode.")
+        st.caption(
+            "To enable Kafka streaming: `uvicorn streaming.simulation_producer:app --port 8000`"
+        )
+        mode = "local"
+
+    st.markdown("Watch any historical game unfold pitch-by-pitch")
+
+    # Initialize session state
+    if "sim_running" not in st.session_state:
+        st.session_state.sim_running = False
+    if "sim_pitch_idx" not in st.session_state:
+        st.session_state.sim_pitch_idx = -1
+    if "sim_game_pk" not in st.session_state:
+        st.session_state.sim_game_pk = None
+    if "sim_pitches" not in st.session_state:
+        st.session_state.sim_pitches = None
+    if "sim_mode" not in st.session_state:
+        st.session_state.sim_mode = mode
+    if "sim_speed" not in st.session_state:
+        st.session_state.sim_speed = 1.0
+
+    # Sidebar controls
+    st.sidebar.markdown("### ⚙️ Simulation Settings")
+
+    if mode == "kafka":
+        speed = st.sidebar.slider(
+            "Pitches per Second",
+            min_value=0.5,
+            max_value=5.0,
+            value=st.session_state.sim_speed,
+            step=0.5,
+            help="How many pitches to show per second (e.g., 1 = one pitch every second, 2 = two pitches per second)",
+        )
+        if speed != st.session_state.sim_speed:
+            st.session_state.sim_speed = speed
+            if st.session_state.sim_running:
+                update_simulation_speed(speed)
+    else:
+        # Local mode - use same pitches per second metric
+        speed = st.sidebar.slider(
+            "Pitches per Second",
+            min_value=0.5,
+            max_value=5.0,
+            value=st.session_state.sim_speed,
+            step=0.5,
+            help="How many pitches to show per second",
+        )
+        st.session_state.sim_speed = speed
+
+    show_velocity = st.sidebar.checkbox("Show Velocity Chart", value=True)
+    show_pitch_log = st.sidebar.checkbox("Show Pitch Log", value=True)
+
+    st.sidebar.markdown("---")
+
+    # Show Kafka status in sidebar if connected
+    if kafka_available and api_status:
+        st.sidebar.markdown("### 📊 Stream Status")
+        if api_status.get("is_running"):
+            progress = api_status.get("progress_pct", 0)
+            st.sidebar.progress(progress / 100, text=f"Progress: {progress:.1f}%")
+            st.sidebar.caption(
+                f"Pitch {api_status.get('current_pitch', 0)} / {api_status.get('total_pitches', 0)}"
+            )
+            if api_status.get("is_paused"):
+                st.sidebar.warning("⏸️ Paused")
+            else:
+                st.sidebar.success("▶️ Playing")
+        else:
+            st.sidebar.info("Ready to stream")
+
+    st.sidebar.markdown("---")
+
+    # Game Selection
+    st.subheader("📅 Select a Game")
+
+    col_date, col_game = st.columns([1, 2])
+
+    with col_date:
+        available_dates, min_date, max_date = get_available_dates()
+        if not available_dates:
+            st.warning("No games found in database.")
+            st.stop()
+
+        selected_date = st.date_input(
+            "Game Date", value=max_date, min_value=min_date, max_value=max_date
+        )
+
+    with col_game:
+        games_df = get_games_for_date(str(selected_date))
+
+        if games_df.empty:
+            st.info(f"No games on {selected_date}")
+            st.stop()
+
+        game_options = []
+        for _, game in games_df.iterrows():
+            label = f"{game['AWAY_TEAM']} @ {game['HOME_TEAM']} ({int(game['AWAY_SCORE'])}-{int(game['HOME_SCORE'])}) - {game['TOTAL_PITCHES']} pitches"
+            game_options.append((game["GAME_PK"], label))
+
+        selected_game = st.selectbox(
+            "Select Game", game_options, format_func=lambda x: x[1]
+        )
+
+    game_pk = selected_game[0]
+
+    # Load game data if changed
+    if st.session_state.sim_game_pk != game_pk:
+        st.session_state.sim_game_pk = game_pk
+        st.session_state.sim_pitches = get_game_pitches_ordered(game_pk)
+        st.session_state.sim_pitch_idx = -1
+        st.session_state.sim_running = False
+        # Stop any running Kafka simulation when game changes
+        if kafka_available:
+            stop_kafka_simulation()
+
+    pitches_df = st.session_state.sim_pitches
+
+    if pitches_df is None or pitches_df.empty:
+        st.warning("No pitch data available for this game.")
+        st.stop()
+
+    total_pitches = len(pitches_df)
+
+    # Game info header
+    first_pitch = pitches_df.iloc[0]
+    away_team = first_pitch["AWAY_TEAM"]
+    home_team = first_pitch["HOME_TEAM"]
+
+    st.markdown(f"### {away_team} @ {home_team}")
+    mode_label = "🔴 Kafka Stream" if mode == "kafka" else "💻 Local"
+    st.caption(
+        f"Game PK: {game_pk} | Total Pitches: {total_pitches} | Mode: {mode_label}"
+    )
+
+    st.divider()
+
+    # Control buttons
+    col_ctrl1, col_ctrl2, col_ctrl3, col_ctrl4, col_ctrl5 = st.columns(5)
+
+    with col_ctrl1:
+        if st.button("⏮️ Reset", use_container_width=True):
+            st.session_state.sim_pitch_idx = -1
+            st.session_state.sim_running = False
+            if kafka_available:
+                stop_kafka_simulation()
+            st.rerun()
+
+    with col_ctrl2:
+        if st.button("⏪ -10", use_container_width=True):
+            st.session_state.sim_pitch_idx = max(
+                -1, st.session_state.sim_pitch_idx - 10
+            )
+            st.rerun()
+
+    with col_ctrl3:
+        if st.session_state.sim_running:
+            if st.button("⏸️ Pause", use_container_width=True):
+                st.session_state.sim_running = False
+                if kafka_available:
+                    pause_kafka_simulation()
+                st.rerun()
+        else:
+            if st.button("▶️ Play", use_container_width=True):
+                st.session_state.sim_running = True
+                if kafka_available and mode == "kafka":
+                    start_kafka_simulation(game_pk, st.session_state.sim_speed)
+                st.rerun()
+
+    with col_ctrl4:
+        if st.button("⏩ +10", use_container_width=True):
+            st.session_state.sim_pitch_idx = min(
+                total_pitches - 1, st.session_state.sim_pitch_idx + 10
+            )
+            st.rerun()
+
+    with col_ctrl5:
+        if st.button("⏭️ End", use_container_width=True):
+            st.session_state.sim_pitch_idx = total_pitches - 1
+            st.session_state.sim_running = False
+            if kafka_available:
+                stop_kafka_simulation()
+            st.rerun()
+
+    # Progress slider
+    pitch_idx = st.slider(
+        "Pitch Progress",
+        min_value=0,
+        max_value=total_pitches,
+        value=st.session_state.sim_pitch_idx + 1,
+        format="Pitch %d",
+    )
+
+    if pitch_idx - 1 != st.session_state.sim_pitch_idx:
+        st.session_state.sim_pitch_idx = pitch_idx - 1
+        st.session_state.sim_running = False
+
+    current_idx = st.session_state.sim_pitch_idx
+
+    # In Kafka mode, we no longer sync with producer's pitch index
+    # The dashboard controls its own pace to avoid skipping pitches due to slow refresh
+    # The producer still runs (for Spark/other consumers) but dashboard is independent
+    if mode == "kafka" and st.session_state.sim_running:
+        # Just check if simulation is still active on the server
+        status = get_simulation_status()
+        if status and not status.get("is_running") and not status.get("is_paused"):
+            # Producer stopped unexpectedly, but we keep going locally
+            pass
+
+    st.divider()
+
+    # Main display area
+    if current_idx >= 0:
+        current_pitch = pitches_df.iloc[current_idx]
+
+        # Scoreboard and current pitch info
+        col_score, col_count, col_pitch = st.columns([2, 1, 3])
+
+        with col_score:
+            st.markdown("#### 📊 Scoreboard")
+            inning = int(current_pitch["INNING"])
+            half = "▲" if current_pitch["INNING_TOPBOT"] == "Top" else "▼"
+            home_score = (
+                int(current_pitch["HOME_SCORE"])
+                if pd.notna(current_pitch["HOME_SCORE"])
+                else 0
+            )
+            away_score = (
+                int(current_pitch["AWAY_SCORE"])
+                if pd.notna(current_pitch["AWAY_SCORE"])
+                else 0
+            )
+
+            st.markdown(
+                f"""
+            <div style="font-size: 24px; font-family: monospace;">
+                <b>{half} {inning}</b>
+            </div>
+            <div style="font-size: 20px;">
+                {away_team}: <b>{away_score}</b><br>
+                {home_team}: <b>{home_score}</b>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with col_count:
+            st.markdown("#### Count")
+            balls = (
+                int(current_pitch["BALLS"]) if pd.notna(current_pitch["BALLS"]) else 0
+            )
+            strikes = (
+                int(current_pitch["STRIKES"])
+                if pd.notna(current_pitch["STRIKES"])
+                else 0
+            )
+            outs = int(current_pitch["OUTS"]) if pd.notna(current_pitch["OUTS"]) else 0
+            st.markdown(
+                create_pitch_count_display(balls, strikes, outs), unsafe_allow_html=True
+            )
+
+        with col_pitch:
+            st.markdown("#### ⚾ Current Pitch")
+
+            velo = current_pitch["RELEASE_SPEED"]
+            velo_str = f"{velo:.1f} mph" if pd.notna(velo) else "N/A"
+
+            spin = current_pitch["SPIN_RATE"]
+            spin_str = f"{int(spin)} rpm" if pd.notna(spin) else "N/A"
+
+            st.markdown(
+                f"""
+            **Pitcher:** {current_pitch['PITCHER_NAME']}  
+            **Pitch:** {current_pitch['PITCH_NAME']} ({current_pitch['PITCH_TYPE']})  
+            **Velocity:** {velo_str}  
+            **Spin:** {spin_str}  
+            **Result:** {current_pitch['DESCRIPTION']}
+            """
+            )
+
+            if pd.notna(current_pitch["EVENTS"]) and current_pitch["EVENTS"]:
+                st.success(f"🎯 **{current_pitch['EVENTS']}**")
+
+        st.divider()
+
+        # Visualizations
+        col_zone, col_data = st.columns([1, 1])
+
+        with col_zone:
+            st.markdown("#### Strike Zone")
+            zone_fig = create_live_strike_zone(pitches_df, current_idx)
+            st.plotly_chart(zone_fig, use_container_width=True)
+
+        with col_data:
+            if show_velocity:
+                st.markdown("#### Velocity Tracker")
+                velo_fig = create_velocity_tracker(pitches_df, current_idx)
+                st.plotly_chart(velo_fig, use_container_width=True)
+
+        # Pitch log
+        if show_pitch_log:
+            with st.expander("📋 Pitch Log", expanded=False):
+                log_df = pitches_df.iloc[: current_idx + 1][
+                    [
+                        "INNING",
+                        "INNING_TOPBOT",
+                        "PITCHER_NAME",
+                        "PITCH_NAME",
+                        "RELEASE_SPEED",
+                        "DESCRIPTION",
+                        "EVENTS",
+                    ]
+                ].copy()
+                log_df = log_df.iloc[::-1]  # Reverse to show most recent first
+                st.dataframe(log_df.head(20), use_container_width=True, hide_index=True)
+
+    else:
+        # No pitch selected yet
+        st.info("👆 Press **Play** or use the slider to start the simulation")
+
+        # Show game summary
+        st.markdown("#### Game Preview")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Pitches", total_pitches)
+        col2.metric("Pitchers", pitches_df["PITCHER_NAME"].nunique())
+        col3.metric("Innings", pitches_df["INNING"].max())
+
+    # Auto-advance logic
+    if st.session_state.sim_running and current_idx < total_pitches - 1:
+        # Both modes now work the same way - dashboard controls its own pace
+        # Speed = pitches per second, delay = 1/speed
+        delay = 1.0 / st.session_state.sim_speed
+        time.sleep(delay)
+        st.session_state.sim_pitch_idx += 1
+        st.rerun()
+    elif st.session_state.sim_running and current_idx >= total_pitches - 1:
+        st.session_state.sim_running = False
+        if kafka_available:
+            stop_kafka_simulation()
+        st.success("🎉 Game Complete!")
+
+
+# =============================================================================
 # MAIN APP
 # =============================================================================
 
@@ -1073,16 +1683,17 @@ def main():
 
     page = st.sidebar.radio(
         "Navigation",
-        ["🏠 Home", "🎯 Game Explorer", "🆚 Team Matchup"],
+        ["🏠 Home", "🎯 Game Explorer", "🆚 Team Matchup", "🎬 Live Simulation"],
         label_visibility="collapsed",
     )
 
     st.sidebar.markdown("---")
 
-    # Auto-refresh toggle
-    auto_refresh = st.sidebar.checkbox("Auto-refresh (60s)", value=False)
-    if auto_refresh:
-        st.sidebar.info("Dashboard will refresh every 60 seconds")
+    # Auto-refresh toggle (only for non-simulation pages)
+    if page != "🎬 Live Simulation":
+        auto_refresh = st.sidebar.checkbox("Auto-refresh (60s)", value=False)
+        if auto_refresh:
+            st.sidebar.info("Dashboard will refresh every 60 seconds")
 
     st.sidebar.markdown("---")
     st.sidebar.caption("Data: MLB Statcast via pybaseball")
@@ -1095,6 +1706,8 @@ def main():
         page_game_explorer()
     elif page == "🆚 Team Matchup":
         page_team_matchup()
+    elif page == "🎬 Live Simulation":
+        page_live_simulation()
 
 
 if __name__ == "__main__":
