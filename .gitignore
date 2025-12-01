@@ -11,6 +11,9 @@ docs/Project Progress Report
 docs/Project Proposal
 streaming_checkpoint
 docs/Progress Docs
+simulation_checkpoint
+
+
 # Other
 .github/
 *.p8
