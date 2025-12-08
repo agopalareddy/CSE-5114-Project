@@ -1,0 +1,54 @@
+% Project Report Style File for CSE 5114
+% Provides custom commands and formatting for improved readability
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{Project Report}[2024/12/07 CSE 5114 Project Report Style]
+
+% ============================================================
+% CUSTOM COMMANDS FOR CONSISTENCY
+% ============================================================
+
+% Technology names - ensures consistent formatting
+\newcommand{\kafka}{\textsc{Kafka}}
+\newcommand{\spark}{\textsc{Spark}}
+\newcommand{\snowflake}{\textsc{Snowflake}}
+\newcommand{\airflow}{\textsc{Airflow}}
+\newcommand{\flink}{\textsc{Flink}}
+\newcommand{\redis}{\textsc{Redis}}
+\newcommand{\statcast}{\textsc{Statcast}}
+\newcommand{\streamlit}{\textsc{Streamlit}}
+\newcommand{\fastapi}{\textsc{FastAPI}}
+
+% Database objects - monospace for code-like elements
+\newcommand{\dbtable}[1]{\texttt{#1}}
+\newcommand{\dbfield}[1]{\texttt{#1}}
+
+% Emphasis styles
+\newcommand{\term}[1]{\textit{#1}}  % For introducing new terms
+\newcommand{\layer}[1]{\textbf{#1}} % For architecture layers
+
+% ============================================================
+% FORMATTING ENHANCEMENTS
+% ============================================================
+
+% Tighter lists for better space usage
+\RequirePackage{enumitem}
+\setlist{nosep, leftmargin=*}
+\setlist[itemize]{label=\textbullet}
+\setlist[enumerate]{label=\arabic*.}
+
+% Better paragraph spacing
+\setlength{\parskip}{0.5em}
+
+% ============================================================
+% CUSTOM ENVIRONMENTS
+% ============================================================
+
+% For key insights or takeaways
+\newenvironment{keypoint}{%
+  \par\smallskip\noindent\textbf{Key Point:}\itshape\space
+}{\par\smallskip}
+
+% For trade-off discussions
+\newenvironment{tradeoff}{%
+  \par\smallskip\noindent\textbf{Trade-off:}\space
+}{\par\smallskip}

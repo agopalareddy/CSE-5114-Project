@@ -1,0 +1,285 @@
+\documentclass[conference]{IEEEtran}
+
+% Standard IEEE packages
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{booktabs}  % Professional tables
+
+% Custom style file
+\usepackage{ProjectReport}
+
+\begin{document}
+
+\title{MLB Game Simulation Dashboard:\\A Lambda Architecture Approach}
+
+\author{
+  \IEEEauthorblockN{Aadarsha Gopala Reddy}
+  \IEEEauthorblockA{Department of Computer Science\\
+    Washington University in St.\ Louis\\
+    St.\ Louis, MO, USA\\
+    a.gopalareddy@wustl.edu}
+  \and
+  \IEEEauthorblockN{Eddy Sul}
+  \IEEEauthorblockA{Department of Computer Science\\
+    Washington University in St.\ Louis\\
+    St.\ Louis, MO, USA\\
+    eddysul@wustl.edu}
+}
+
+\maketitle
+
+% ============================================================
+\begin{abstract}
+  We present an interactive analytics dashboard for Major League Baseball (MLB) using \term{lambda architecture}. Our system combines batch processing of historical \statcast{} data (2015--2025) with a streaming layer that enables realistic game simulation. The pipeline uses \kafka{} for stream processing, \spark{} for micro-batch operations, \snowflake{} for data warehousing, and \airflow{} for orchestration. Users can explore historical games, analyze team matchups, and simulate past games pitch-by-pitch with configurable playback speeds.
+\end{abstract}
+
+\begin{IEEEkeywords}
+  baseball analytics, real-time streaming, lambda architecture, Apache Kafka, Spark Streaming, data visualization
+\end{IEEEkeywords}
+
+% ============================================================
+\section{Introduction}
+
+The introduction of Statcast in 2015 transformed statistical analysis across major league baseball (MLB). Prior to its introduction, most of the data in mlb consisted of static, historical box-score data. Statcast introduced a shift from 2D to 3D analytics, capturing granular pitching metrics such as velocity, spin rate and for every batted ball including exit velocity and launch angle. The abundance of new data allows teams to develop new strategies to gain a competitive edge in the league.
+
+Most of this data can be found on Baseball Savant, which provides advanced analytics and visualizations in baseball. Also on mlb.com, viewers can watch live game simulations in real-time using a feature called MLB gameday. MLB gameday focuses on the current pitch in the game and real-time streaming but lacks historical analysis of data. Therefore, we wanted to create an interactive dashboard that handles both live data and provides statistical analysis backed by historical data on each data point entering the system. Specifically, during live simulation we wanted to add aggregational statistics showing each hitter's percentages on specific pitches the pitcher throws and the ability to live simulate games in the past even after they have finished.
+
+% ============================================================
+\section{System Architecture}
+
+Our system follows lambda architecture (Fig.~\ref{fig:pipeline}), combining two processing layers:
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Data Pipeline.png}
+  \caption{Lambda architecture overview with batch and streaming layers.}
+  \label{fig:pipeline}
+\end{figure}
+
+\begin{itemize}
+  \item \layer{Batch Layer:} Daily ingestion of historical data via \airflow{} DAGs, stored in \snowflake{} using a star schema.
+  \item \layer{Streaming Layer:} \kafka{} and \spark{} Streaming process pitch events for game simulation updates.
+\end{itemize}
+
+% ============================================================
+\section{Data Pipeline}
+
+\subsection{Ingestion and Transformation}
+
+We use \texttt{pybaseball}, a Python wrapper for the MLB API, to fetch pitch-by-pitch logs. Each pitch contains 118+ fields; we filter to retain only analysis-relevant metrics. It doesn't provide real-time data from live games, but it does provide the most comprehensive data dating back to 2015, and it is updated daily. Other websites and APIs could provide real-time data, but were either not comprehensive and/or compatible with pybaseball, or were not easily accessible.
+
+The processing workflow:
+\begin{enumerate}
+  \item Fetch daily data via \texttt{pybaseball}
+  \item Transform: remove deprecated fields, nulls, and out-of-scope metrics
+  \item Stage as Parquet files in \snowflake{}
+  \item Load into star schema tables
+  \item Execute data quality checks
+\end{enumerate}
+
+\subsection{Database Schema}
+
+We employ a \term{star schema} optimized for OLAP queries:
+
+\begin{itemize}
+  \item \textbf{Fact table:} \dbtable{fact\_pitches} --- one row per pitch
+  \item \textbf{Dimensions:} \dbtable{player}, \dbtable{team}, \dbtable{pitch\_type}, \dbtable{game}
+\end{itemize}
+
+\subsection{Orchestration}
+
+\airflow{} DAGs manage the pipeline (Fig.~\ref{fig:batch1}--\ref{fig:batch2}):
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Batch Processing.png}
+  \caption{Daily ingestion DAG.}
+  \label{fig:batch1}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Batch Processing 2.png}
+  \caption{Historical backfill DAG (runs every 3 minutes).}
+  \label{fig:batch2}
+\end{figure}
+
+% ============================================================
+\section{Streaming Layer}
+
+The streaming pipeline consists of three components:
+
+\begin{enumerate}
+  \item \textbf{\fastapi{} Producer:} Queries \snowflake{} and publishes pitch events to \kafka{}
+  \item \textbf{\kafka{} Broker:} Buffers events (Docker container with Zookeeper)
+  \item \textbf{\spark{} Consumer:} Processes micro-batches and writes to \dbtable{Live\_Pitches}
+\end{enumerate}
+
+\textbf{Decoupling Strategy:} \streamlit{} exhibits refresh latency that would cause pitch skipping. We decoupled the dashboard from the producer, making the dashboard poll \dbtable{Live\_Pitches} independently, thereby ensuring every pitch displays accurately at the cost of slightly higher latency.
+
+\begin{tradeoff}
+  Data accuracy over minimal latency. Missing pitches would confuse viewers; slight delay is acceptable.
+\end{tradeoff}
+
+% ============================================================
+\section{Dashboard Features}
+
+\subsection{Game Explorer}
+Select historical games and analyze pitcher statistics: velocity per pitch type, spin rate, and strikeout percentage. Includes strike zone visualization and velocity progression tracking.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Pitcher Performance.png}
+  \caption{Pitcher repertoire breakdown and key statistics.}
+  \label{fig:pitcher}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Velocity.png}
+  \caption{Pitch velocity progression throughout the game.}
+  \label{fig:velocity}
+\end{figure}
+
+\subsection{Team Matchups}
+Compare head-to-head statistics between teams across a season (Fig.~\ref{fig:matchup}).
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Game Matchup.png}
+  \caption{Team matchup: pitcher vs.\ batter statistics.}
+  \label{fig:matchup}
+\end{figure}
+
+\subsection{Game Simulation}
+Watch historical games unfold pitch-by-pitch with playback controls (0.5--5 pitches/second). Allows replaying any past game. One thing to note is that the replay is not to scale with the real game, but it does provide a good visualization of the game.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.48\textwidth]{Game Simulation.jpg}
+  \caption{Game simulation with game state and playback controls.}
+  \label{fig:simulation}
+\end{figure}
+
+% ============================================================
+\section{Challenges and Design Decisions}
+
+\subsection{Schema Design}
+With 110+ fields per pitch, we invested significant effort selecting relevant columns and designing intuitive dimension tables.
+
+\subsection{Views vs.\ Materialized Tables}
+We chose \snowflake{} views for dashboard aggregations:
+
+\begin{table}[H]
+  \centering
+  \caption{Views vs.\ Materialized Tables Trade-offs}
+  \begin{tabular}{@{}lcc@{}}
+    \toprule
+    \textbf{Factor}     & \textbf{Views} & \textbf{Materialized} \\
+    \midrule
+    Auto-sync with data & \checkmark     & Requires refresh      \\
+    Query performance   & Slower         & Faster                \\
+    Staleness risk      & None           & Possible              \\
+    Our choice          & \checkmark     & ---                   \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+For our workload (frequent writes, user-triggered reads), views provided acceptable latency with guaranteed consistency.
+
+\subsection{Dashboard Latency}
+\streamlit{}, depending on the system it is running on, imposes $\sim$1 second minimum refresh. Our \kafka{} producer can emit faster, but the dashboard cannot display sub-second updates. WebSocket-based alternatives (Dash, React) could improve this.
+
+\subsection{Historical Data Range}
+We focused on 2020--present for two reasons:
+\begin{enumerate}
+  \item Data quality improved post-2019 with upgraded tracking hardware
+  \item Smaller backfill enabled faster development iteration
+\end{enumerate}
+The pipeline supports 2015+ data with minimal modification.
+
+\subsection{Infrastructure Issues}
+\airflow{} exhibited significant bugs and dependency issues when migrating from local device to the LinuxLab environment.
+
+% ============================================================
+\section{Future Work}
+
+\subsection{True Real-Time Integration}
+Current limitation: \texttt{pybaseball} provides data with $\sim$1-day delay.
+
+\textbf{Required changes for live-season support:}
+\begin{enumerate}
+  \item WebSocket connection to MLB Gameday API
+  \item \kafka{} producer emitting events as they arrive
+  \item Reconciliation logic: merge real-time events with next-day \statcast{} data
+\end{enumerate}
+
+Our lambda architecture already supports this---streaming layer handles live events; batch layer provides quality-assured corrections.
+
+\subsection{Data Corrections}
+MLB issues scoring changes and data corrections. Potential solutions:
+\begin{itemize}
+  \item Change Data Capture (CDC) to detect source modifications
+  \item Targeted updates to affected records
+  \item Handle suspended games spanning multiple dates
+\end{itemize}
+
+\subsection{Performance Optimizations}
+\begin{itemize}
+  \item \textbf{\redis{} caching:} Lower latency for live updates
+  \item \textbf{\flink{} streaming:} Event-by-event processing (vs.\ \spark{} micro-batches)
+  \item \textbf{Materialized views:} For high-concurrency scenarios
+\end{itemize}
+
+\subsection{Additional Data Sources}
+
+\begin{table}[H]
+  \centering
+  \caption{Potential Data Sources and Applications}
+  \begin{tabular}{@{}p{2.2cm}p{2.5cm}p{2.8cm}@{}}
+    \toprule
+    \textbf{Data Type} & \textbf{Source/Library}             & \textbf{Application}                                                                 \\
+    \midrule
+    Weather            & OpenWeatherMap API, Visual Crossing & Correlate temperature, humidity, and wind with pitch movement and home run distances \\
+    \addlinespace
+    Stadium Info       & MLB Park Factors, Chadwick Bureau   & Normalize statistics across venues; account for altitude effects (e.g., Coors Field) \\
+    \addlinespace
+    Historical Stats   & Baseball Reference, Lahman Database & All-time head-to-head matchups; career splits analysis                               \\
+    \addlinespace
+    Player Tracking    & MLB Film Room API                   & Defensive positioning; sprint speed correlations                                     \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+These integrations would enable advanced analytics such as weather-adjusted ERA, venue-normalized exit velocity, and predictive matchup modeling based on historical tendencies.
+
+\subsection{Planned Features}
+Batter splits against specific pitch types:
+\begin{center}
+  \textit{Ohtani vs.\ Righty Sliders: .333 Average}
+\end{center}
+
+% ============================================================
+\section{Demonstration}
+Video demo: \url{https://www.youtube.com/watch?v=z01fHvzd-8w}
+
+% ============================================================
+\section{Conclusion}
+We presented an MLB game simulation dashboard combining batch and streaming processing via lambda architecture. The system demonstrates effective integration of \kafka{}, \spark{}, \snowflake{}, and \airflow{} for interactive baseball analytics, enabling users to replay historical games and explore detailed statistics. Future work includes true real-time integration during live seasons.
+
+% ============================================================
+\begin{thebibliography}{00}
+  \bibitem{b1} MLB Advanced Media, ``Statcast,'' \url{https://www.mlb.com/glossary/statcast}.
+  \bibitem{b2} Baseball Savant, ``Statcast Search,'' \url{https://baseballsavant.mlb.com/statcast_search}.
+  \bibitem{b3} pybaseball, ``Python package for baseball data,'' \url{https://github.com/jldbc/pybaseball}.
+  \bibitem{b4} Apache Kafka, \url{https://kafka.apache.org/}.
+  \bibitem{b5} Apache Spark, \url{https://spark.apache.org/}.
+  \bibitem{b6} Snowflake Inc., \url{https://www.snowflake.com/}.
+\end{thebibliography}
+
+\end{document}
