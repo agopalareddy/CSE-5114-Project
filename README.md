@@ -54,4 +54,4 @@ A lambda architecture-based analytics dashboard for Major League Baseball that e
 
 ## Course
 
-CSE 5114 - Washington University in St. Louis
+CSE 5114: Data Manipulation and Management at Scale - Washington University in St. Louis
