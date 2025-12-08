@@ -1,12 +1,9 @@
-# Live Streaming Dashboard - Streaming Dependencies
-# Add these to your existing requirements.txt or install separately
-
 # Spark Streaming
 pyspark>=3.4.0
 
 # Kafka
 kafka-python>=2.0.2
-confluent-kafka>=2.3.0  # Alternative Kafka client
+# confluent-kafka>=2.3.0  # Alternative Kafka client
 
 # Snowflake Spark Connector (install via spark-submit --packages or download JAR)
 # net.snowflake:spark-snowflake_2.12:2.12.0-spark_3.4
@@ -33,6 +30,3 @@ requests>=2.31.0
 # Snowflake Connector (for simulation producer)
 snowflake-connector-python>=3.5.0
 cryptography>=41.0.0
-
-# Optional: Flink (if using PyFlink)
-# apache-flink>=1.18.0
